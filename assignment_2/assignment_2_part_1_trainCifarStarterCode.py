@@ -98,13 +98,17 @@ else:
 # downloading the cifar10 dataset
 
 
-transform=[insert-code: create transforms, will need to include turning data grayscale]
+transform = transforms.Compose([
+    transforms.Grayscale(num_output_channels=1) if grayscale else transforms.Lambda(lambda x: x),
+    transforms.ToTensor()
+])
 
-train_dataset = [insert-code: download and transform cifar10 training data]
-test_dataset = [insert-code: download and transform cifar10 test data]
 
-train_loader = [insert-code: create train data loader]
-test_loader = [insert-code: create test data loader]
+train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
 def check_data_loader_dim(loader):
     # Checking the dataset
@@ -118,17 +122,16 @@ check_data_loader_dim(test_loader)
 
 """# 3) Creating the Model"""
 
-layer_1_n_filters = [insert-code]
-layer_2_n_filters = [insert-code]
-fc_1_n_nodes = [insert-code]
+layer_1_n_filters = 6
+layer_2_n_filters = 16
+fc_1_n_nodes = 120
 kernel_size = 5
 verbose = False
+num_epochs = 10
 
 # calculating the side length of the final activation maps
-final_length = [insert-code: calculate the dimension of the output of the \
-            CNN stage before the MLP layers given the previous 2 convolutional layers \
-                with your padding setting, kernel size and maxpooling
-            ]
+final_length = (32 - kernel_size + 2*2)//2 + 1
+final_length = (final_length - kernel_size + 2*2)//2 + 1
 
 if verbose:
     print(f"final_length = {final_length}")
@@ -148,30 +151,35 @@ class LeNet5(nn.Module):
             in_channels = 3
 
         self.features = nn.Sequential(
-
-            [insert-code]
+            nn.Conv2d(in_channels, layer_1_n_filters, kernel_size=kernel_size, padding=2),
+            nn.Tanh(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(layer_1_n_filters, layer_2_n_filters, kernel_size=kernel_size, padding=2),
+            nn.Tanh(),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+            
         )
 
         self.classifier = nn.Sequential(
-            nn.Linear(final_length*final_length*layer_2_n_filters*in_channels, fc_1_n_nodes),
+            nn.Linear(final_length*final_length*layer_2_n_filters, fc_1_n_nodes),
             nn.Tanh(),
             nn.Linear(fc_1_n_nodes, num_classes)
         )
 
 
     def forward(self, x):
-        x = [insert-code: send input through convolutional layers]
-        x = [insert-code: send input through MLP layers]
+        x = self.features(x)
+        x = x.view(x.size(0), -1)
         logits = self.classifier(x)
         probas = F.softmax(logits, dim=1)
         return logits, probas
 
-model = [insert-code]
+model = LeNet5(num_classes=10, grayscale=True)
 
 if cuda:
     model.cuda()
 
-optimizer = [insert-code: USE AN ADAM OPTIMIZER]
+optimizer = torch.optim.Adam(model.parameters())
 
 """# Step 4: Train/Test Loop"""
 
@@ -180,42 +188,55 @@ optimizer = [insert-code: USE AN ADAM OPTIMIZER]
 def train(epoch):
     model.train()
 
-    criterion = [insert-code]  # The choice of criterion depends on the output of the last layer of your network
+    criterion = nn.CrossEntropyLoss()  # The choice of criterion depends on the output of the last layer of your network
     for batch_idx, (data, target) in enumerate(train_loader):
-        [insert-code: move data to GPU]
+        if cuda:
+            data, target = data.cuda(), target.cuda()
 
         optimizer.zero_grad()
-        logits,probas = model(data) # forward
+        logits,probas = model(data)
 
-        loss = [insert-code]
+        loss = criterion(logits, target)
         loss.backward()
         optimizer.step()
 
         # log metrics
-        [insert-code: finish training loop and logging metrics]
+        if batch_idx % 10 == 0:
+            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)}] Loss: {loss.item()}')
 
     # 
-    [insert-code: Log model parameters to TensorBoard at every epoch]
+    for name, param in model.named_parameters():
+        writer.add_histogram(name, param, epoch)
 
 def test(epoch):
     model.eval()
     test_loss = 0
     correct = 0
-    criterion = [insert-code]  # The choice of criterion depends on the output of the last layer of your network
+    criterion = nn.CrossEntropyLoss()  # The choice of criterion depends on the output of the last layer of your network
     
     with torch.no_grad():
         for data, target in test_loader:
-            [insert-code: move data to GPU]
+            if cuda:
+                data, target = data.cuda(), target.cuda()
 
             logits,probas  = model(data) 
 
             # Calculate the predicted label (highest probability)
+            pred = probas.argmax(dim=1, keepdim=True)
             # Calculate the number of correct prediction and accuracy
-            
-            [insert-code: finish testing loop and logging metrics]
+            correct += pred.eq(target.view_as(pred)).sum().item()
+            test_loss += criterion(logits, target).item()
+
+    test_loss /= len(test_loader.dataset)
+    accuracy = 100. * correct / len(test_loader.dataset)
+    print(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
+    writer.add_scalar('Test/Average loss', test_loss, epoch)
+    writer.add_scalar('Test/Accuracy', accuracy, epoch)
 
 
-[insert-code: running test and training over epoch]
+for epoch in range(1, num_epochs + 1):
+    train(epoch)
+    test(epoch)
 
 writer.close()
 
