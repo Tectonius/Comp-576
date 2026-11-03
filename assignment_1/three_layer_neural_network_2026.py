@@ -1,7 +1,12 @@
-__author__ = 'tan_nguyen'
 import numpy as np
 from sklearn import datasets, linear_model
 import matplotlib.pyplot as plt
+from scipy.special import softmax
+
+def sigmoid(z):
+    return np.ones_like(z) / (1 + np.exp(-z))
+
+
 
 def generate_data():
     '''
@@ -12,7 +17,7 @@ def generate_data():
     X, y = datasets.make_moons(200, noise=0.20)
     return X, y
 
-def plot_decision_boundary(pred_func, X, y):
+def plot_decision_boundary(pred_func, X, y, save_path=None):
     '''
     plot the decision boundary
     :param pred_func: function used to predict the label
@@ -33,6 +38,8 @@ def plot_decision_boundary(pred_func, X, y):
     plt.contourf(xx, yy, Z, cmap=plt.cm.Spectral)
     plt.scatter(X[:, 0], X[:, 1], c=y, cmap=plt.cm.Spectral)
     plt.show()
+    if save_path is not None:
+        plt.savefig(save_path)
 
 ########################################################################################################################
 ########################################################################################################################
@@ -73,9 +80,15 @@ class NeuralNetwork(object):
         :param type: Tanh, Sigmoid, or ReLU
         :return: activations
         '''
-
-        # YOU IMPLMENT YOUR actFun HERE
-
+        
+        type = type.lower()
+        assert type in ['tanh', 'sigmoid', 'relu']
+        if type == 'tanh':
+            return np.tanh(z)
+        elif type == 'sigmoid':
+            return sigmoid(z)
+        elif type == 'relu':
+            return np.maximum(0, z)
         return None
 
     def diff_actFun(self, z, type):
@@ -85,8 +98,17 @@ class NeuralNetwork(object):
         :param type: Tanh, Sigmoid, or ReLU
         :return: the derivatives of the activation functions wrt the net input
         '''
-
-        # YOU IMPLEMENT YOUR diff_actFun HERE
+        
+        type = type.lower()
+        
+        assert type in ['tanh', 'sigmoid', 'relu']
+        
+        if type == 'tanh':
+            return 1 - np.tanh(z) ** 2
+        elif type == 'sigmoid':
+            return sigmoid(z) * (1 - sigmoid(z))
+        elif type == 'relu':    
+            return np.where(z > 0, 1, 0)
 
         return None
 
@@ -101,10 +123,10 @@ class NeuralNetwork(object):
 
         # YOU IMPLEMENT YOUR feedforward HERE
 
-        # self.z1 =
-        # self.a1 =
-        # self.z2 =
-        # self.probs =
+        self.z1 = np.matmul(X, self.W1) + self.b1
+        self.a1 = actFun(self.z1)
+        self.z2 = np.matmul(self.a1, self.W2) + self.b2
+        self.probs = np.clip(softmax(self.z2, axis=1), 1e-15, 1 - 1e-15)
         return None
 
     def calculate_loss(self, X, y):
@@ -120,7 +142,8 @@ class NeuralNetwork(object):
 
         # YOU IMPLEMENT YOUR CALCULATION OF THE LOSS HERE
 
-        # data_loss =
+        data_loss = -np.sum([np.log(self.probs[i][idx]) for i, idx in enumerate(y)])
+                
 
         # Add regulatization term to loss (optional)
         data_loss += self.reg_lambda / 2 * (np.sum(np.square(self.W1)) + np.sum(np.square(self.W2)))
@@ -140,15 +163,19 @@ class NeuralNetwork(object):
         backprop run backpropagation to compute the gradients used to update the parameters in the backward step
         :param X: input data
         :param y: given labels
-        :return: dL/dW1, dL/b1, dL/dW2, dL/db2
+        :return: dL/dW1, dL/dW2, dL/db1, dL/db2
         '''
 
         # IMPLEMENT YOUR BACKPROP HERE
-
-        # dW2 = dL/dW2
-        # db2 = dL/db2
-        # dW1 = dL/dW1
-        # db1 = dL/db1
+        num_examples = len(X)
+        dz2 = self.probs.copy()
+        dz2[range(num_examples), y] -= 1
+        dz2 /= num_examples
+        dW2 = np.matmul(self.a1.T, dz2)
+        db2 = np.sum(dz2, axis=0, keepdims=True)
+        dz1 = np.matmul(dz2, self.W2.T) * self.diff_actFun(self.z1, type=self.actFun_type)
+        dW1 = np.matmul(X.T, dz1)
+        db1 = np.sum(dz1, axis=0, keepdims=True)
         return dW1, dW2, db1, db2
 
     def fit_model(self, X, y, epsilon=0.01, num_passes=20000, print_loss=True):
@@ -182,24 +209,41 @@ class NeuralNetwork(object):
             if print_loss and i % 1000 == 0:
                 print("Loss after iteration %i: %f" % (i, self.calculate_loss(X, y)))
 
-    def visualize_decision_boundary(self, X, y):
+    def visualize_decision_boundary(self, X, y, savepath=None):
         '''
         visualize_decision_boundary plot the decision boundary created by the trained network
         :param X: input data
         :param y: given labels
         :return:
         '''
-        plot_decision_boundary(lambda x: self.predict(x), X, y)
+        plot_decision_boundary(lambda x: self.predict(x), X, y, save_path=savepath)
 
 def main():
     # # generate and visualize Make-Moons dataset
-    # X, y = generate_data()
-    # plt.scatter(X[:, 0], X[:, 1], s=40, c=y, cmap=plt.cm.Spectral)
-    # plt.show()
+    X, y = generate_data()
+    
+    for func in ['tanh', 'sigmoid', 'relu']:
+        input_dim = 2
+        hidden_dim = 3
+        model = NeuralNetwork(nn_input_dim=input_dim, nn_hidden_dim=hidden_dim , nn_output_dim=2, actFun_type=func)
+        model.fit_model(X, y, epsilon=0.01, num_passes=100000, print_loss=False)
+        model.visualize_decision_boundary(X, y, savepath=f"decision_boundary_reg_{func}_{hidden_dim}.png")
+    
+    for func in ['tanh']:
+        input_dim = 2
+        hidden_dim = 10
+        model = NeuralNetwork(nn_input_dim=input_dim, nn_hidden_dim=hidden_dim , nn_output_dim=2, actFun_type=func)
+        model.fit_model(X, y, epsilon=0.01, num_passes=100000, print_loss=False)
+        model.visualize_decision_boundary(X, y, savepath=f"decision_boundary_reg_{func}_{hidden_dim}.png")
+    
+    for func in ['tanh']:
+        input_dim = 2
+        hidden_dim = 64
+        model = NeuralNetwork(nn_input_dim=input_dim, nn_hidden_dim=hidden_dim , nn_output_dim=2, actFun_type=func)
+        model.fit_model(X, y, epsilon=0.01, num_passes=100000, print_loss=False)
+        model.visualize_decision_boundary(X, y, savepath=f"decision_boundary_reg_{func}_{hidden_dim}.png")
 
-    # model = NeuralNetwork(nn_input_dim=2, nn_hidden_dim=3 , nn_output_dim=2, actFun_type='tanh')
-    # model.fit_model(X,y)
-    # model.visualize_decision_boundary(X,y)
+       
 
 if __name__ == "__main__":
     main()
